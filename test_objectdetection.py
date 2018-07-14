@@ -25,7 +25,7 @@ def detection(model,config):
     category_index = model.category_index
     print("> Building Graph")
     with detection_graph.as_default():
-        with tf.Session(graph=detection_graph,config=tf_config) as sess:
+        with tf.Session() as sess: #graph=detection_graph,config=tf_config) as sess:
             # start Videostream
             # Define Input and Ouput tensors
             tensor_dict = model.get_tensordict(['num_detections', 'detection_boxes', 'detection_scores','detection_classes', 'detection_masks'])
@@ -62,6 +62,7 @@ def detection(model,config):
                 run_metadata = False
 
             images = load_images(config.IMAGE_PATH,config.LIMIT_IMAGES)
+            print(len(images))
             timer = Timer().start()
             print('> Starting Detection')
             for image in images:
