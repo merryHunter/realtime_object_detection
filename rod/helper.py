@@ -259,6 +259,7 @@ def vis_detection(image, boxes, classes, scores, masks, category_index, fps=None
         line_thickness=8)
         if fps:
             vis_text(image,"fps: {}".format(fps), (10,30))
+        return image
         cv2.imshow('raltime_object_detection', image)
     elif not visualize and cur_frame:
         # Exit after max frames if no visualization
