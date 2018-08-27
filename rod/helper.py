@@ -24,7 +24,6 @@ if sys.version_info[0] == 2:
 elif sys.version_info[0] == 3:
     import queue as Queue
 from tensorflow.python.client import timeline
-from rod.utils import visualization_utils_cv as vis_util
 
 
 class FPS(object):
@@ -52,8 +51,7 @@ class FPS(object):
         self._glob_end = datetime.datetime.now()
         print('> [INFO] elapsed frames (total): {}'.format(self._glob_numFrames))
         print('> [INFO] elapsed time (total): {:.2f}'.format(self.elapsed()))
-        print('> [INFO] mean. FPS: {:.2f}'.format(self.fps()))
-        print('> [INFO] median. FPS: {:.2f}'.format(np.median(self._log)))
+        print('> [INFO] approx. FPS: {:.2f}'.format(self.fps()))
 
     def update(self):
         self._first = True
@@ -65,11 +63,6 @@ class FPS(object):
           print("> FPS: {}".format(self.fps_local()))
           self._local_numFrames = 0
           self._local_start = self._curr_time
-
-        self._log.append(self.fps_local())
-        if len(self._log) > 1000:
-            self._log = []
-
 
     def elapsed(self):
         return (self._glob_end - self._glob_start).total_seconds()
@@ -97,9 +90,9 @@ class Timer(object):
         self._time = 1
         self._cache = []
         self._log = []
+        self._first = True
 
     def start(self):
-        self._first = True
         return self
 
     def tic(self):
@@ -161,13 +154,81 @@ class Timer(object):
         print ("> [INFO] resulting median fps: {}".format(self._medianfps))
 
 
-class WebcamVideoStream(object):
+class InputStream(object):
+    """
+    input stream base class
+    """
+    def __init__(self):
+        self.real_height = 0
+        self.real_width = 0
+        self.stopped = False
+        self.frame = None
+
+    def start(self):
+        self.stopped = False
+        return self
+
+    def stop(self):
+        self.stopped = True
+
+    def isActive(self):
+        return not self.stopped
+
+    def read(self):
+        return self.frame
+
+
+class ImageStream(InputStream):
+    """
+    Test Image handling class
+    """
+    def __init__(self,image_path,limit=None,image_shape=None):
+        super(ImageStream, self).__init__()
+        self.frame_shape = image_shape
+        self.frame_path = image_path
+        self.frames = []
+        self.limit = limit
+        if not limit:
+            self.limit = float('inf')
+
+    def start(self):
+        self.load_images()
+        self.stopped = False
+        return self
+
+    def load_images(self):
+        for root, dirs, files in os.walk(self.frame_path):
+            for idx,file in enumerate(files):
+                if idx >=self.limit:
+                    self.frames.sort()
+                    return self.frames
+                if file.endswith(".jpg") or file.endswith(".JPG") or file.endswith(".JPEG") or file.endswith(".png"):
+                    self.frames.append(os.path.join(root, file))
+        self.frames.sort()
+
+    def read(self):
+        if self.frame_shape is not None:
+            self.frame = cv2.resize(cv2.imread(self.frames.pop()),(self.frame_shape[:2]))
+        else:
+            self.frame = cv2.imread(self.frames.pop())
+        self.real_height,self.real_width,_ = self.frame.shape
+        return self.frame
+
+    def isActive(self):
+        if self.frames and not self.stopped:
+            return True
+        else:
+            return False
+
+
+class VideoStream(InputStream):
     """
     Class for Video Input frame capture
     Based on OpenCV VideoCapture
     adapted from https://www.pyimagesearch.com/2015/12/21/increasing-webcam-fps-with-python-and-opencv/
     """
     def __init__(self, src, width, height):
+        super(VideoStream, self).__init__()
         # initialize the video camera stream and read the first frame
         # from the stream
         self.frame_counter = 1
@@ -177,18 +238,15 @@ class WebcamVideoStream(object):
         self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         (self.grabbed, self.frame) = self.stream.read()
-        # initialize the variable used to indicate if the thread should
-        # be stopped
-        self.stopped = False
         #Debug stream shape
         self.real_width = int(self.stream.get(3))
         self.real_height = int(self.stream.get(4))
-        print("> Start video stream with shape: {},{}".format(self.real_width,self.real_height))
-        print("> Press 'q' to Exit")
 
     def start(self):
         # start the thread to read frames from the video stream
+        print("> Start video stream with shape: {},{}".format(self.real_width,self.real_height))
         threading.Thread(target=self.update, args=()).start()
+        self.stopped = False
         return self
 
     def update(self):
@@ -197,20 +255,11 @@ class WebcamVideoStream(object):
             # if the thread indicator variable is set, stop the thread
             if self.stopped:
                 self.stream.release()
-                cv2.destroyAllWindows()
                 return
 
             # otherwise, read the next frame from the stream
             (self.grabbed, self.frame) = self.stream.read()
             self.frame_counter += 1
-
-    def read(self):
-        # return the frame most recently read
-        return self.frame
-
-    def stop(self):
-        # indicate that the thread should be stopped
-        self.stopped = True
 
     def isActive(self):
         # check if VideoCapture is still Opened
@@ -222,79 +271,9 @@ class WebcamVideoStream(object):
     def resized(self,target_size):
         return cv2.resize(self.frame, target_size)
 
-"""
-Load Test Images
-"""
-def load_images(image_path,limit=None):
-    if not limit:
-        limit = float('inf')
-    images = []
-    for root, dirs, files in os.walk(image_path):
-        for idx,file in enumerate(files):
-            if idx >=limit:
-                images.sort()
-                return images
-            if file.endswith(".jpg"):
-                images.append(os.path.join(root, file))
-    images.sort()
-    return images
-"""
-Visualization functions
-"""
-def vis_text(image, string, pos):
-    cv2.putText(image,string,(pos),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (77, 255, 9), 2)
-
-def vis_detection(image, boxes, classes, scores, masks, category_index, fps=None, visualize=False, det_interval=5, det_th=0.5, max_frames=500, cur_frame = None):
-    if visualize:
-        vis_util.visualize_boxes_and_labels_on_image_array(
-        image,
-        boxes,
-        classes,
-        scores,
-        category_index,
-        instance_masks=masks,
-        use_normalized_coordinates=True,
-        line_thickness=8)
-        if fps:
-            vis_text(image,"fps: {}".format(fps), (10,30))
-        cv2.imshow('raltime_object_detection', image)
-    elif not visualize and cur_frame:
-        # Exit after max frames if no visualization
-        for box, score, _class in zip(boxes, scores, classes):
-            if cur_frame%det_interval==0 and score > det_th:
-                label = category_index[_class]['name']
-                print("label: {}\nscore: {}\nbox: {}".format(label, score, box))
-    elif fps == "console":
-        for box, score, _class in zip(boxes, scores, classes):
-            if score > det_th:
-                label = category_index[_class]['name']
-                print("label: {}\nscore: {}\nbox: {}".format(label, score, box))
-    # Exit Option
-    if visualize:
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            return False
-    elif not visualize and fps:
-        if cur_frame >= max_frames:
-            return False
-    return True
-
-def create_colormap(seg_map):
-    """
-    Takes A 2D array storing the segmentation labels.
-    Returns A 2D array where each element is the color indexed
-    by the corresponding element in the input label to the PASCAL color map.
-    """
-    colormap = np.zeros((256, 3), dtype=int)
-    ind = np.arange(256, dtype=int)
-    for shift in reversed(range(8)):
-        for channel in range(3):
-            colormap[:, channel] |= ((ind >> channel) & 1) << shift
-        ind >>= 3
-    return colormap[seg_map]
 
 """
-Tracker functions
+Tracker converter functions
 """
 def conv_detect2track(box, width, height):
     # transforms normalized to absolut coords
@@ -324,12 +303,38 @@ def conv_track2detect(box, width, height):
     return newbox
 
 
+def get_model_list(models_path):
+    """
+    Returns List of Model names in models_path
+    """
+    for root, dirs, files in os.walk(models_path):
+        if root.count(os.sep) - models_path.count(os.sep) == 0:
+            for idx,model in enumerate(dirs):
+                model_list=[]
+                model_list.append(dirs)
+                model_list = np.squeeze(model_list)
+                model_list.sort()
+    print("> Loaded following sequention of models: \n{}".format(model_list))
+    return model_list
+
+
+def check_if_optimized_model(model_dir):
+    """
+    check if there is an optimized graph in the model_dir
+    """
+    for root, dirs, files in os.walk(model_dir):
+        for file in files:
+            if 'optimized' in file:
+                return True
+                print('> found: optimized graph')
+    return False
+
+
 class SessionWorker(object):
     """
-    TensorFlow Session Thread for split_model spead Hack
-    from https://github.com/naisy/realtime_object_detection/blob/master/lib/session_worker.py
+    TensorFlow Session Thread for split_model speed Hack
 
-     usage:
+    usage:
      before:
          results = sess.run([opt1,opt2],feed_dict={input_x:x,input_y:y})
      after:
@@ -343,7 +348,9 @@ class SessionWorker(object):
          results = q['results']
          extras = q['extras']
 
-    extras: None or frame image data for draw. GPU detection thread doesn't wait result. Therefore, keep frame image data if you want to draw detection result boxes on image.
+    extras: None or input image frame.
+    	(reason: GPU detection thread does not wait for result.
+    		Therefore, keep frame if VISUALIZE=TRUE.)
     """
     def __init__(self,tag,graph,config):
         self.lock = threading.Lock()
@@ -440,43 +447,3 @@ class TimeLiner(object):
         chrome_trace = fetched_timeline.generate_chrome_trace_format()
         with open(file_name, 'w') as f:
         	f.write(chrome_trace)
-
-
-class RosDetectionPublisher(object):
-    """
-    Class for publishing Ros messages
-    Not yet used
-    """
-    def __init__(self):
-        self.objDetPub = rospy.Publisher('objectDetection', Detection, queue_size=10)
-
-    def publish(self, boxes, scores, classes, num, image_shape, category_index):
-        #obj = []
-        # create an empty python array
-        msg = Detection()
-        for i in range(boxes.shape[0]):
-            if scores[i] > 0.5:
-                if classes[i] in category_index.keys():
-                    class_name = category_index[classes[i]]['name']
-                else:
-                    class_name = 'N/A'
-            ymin, xmin, ymax, xmax = tuple(boxes[i].tolist())
-            (left, right, top, bottom) = (int(xmin * image_shape[1]), int(xmax * image_shape[1]), int(ymin * image_shape[0]), int(ymax * image_shape[0]))
-            #obj.append([class_name, int(100*scores[i]), left, top, right, bottom])
-            display_str = '##\nnumber {} {}: {}% at image coordinates (({}, {}) to ({}, {}))\n##'.format(i, class_name, int(100*scores[i]), left, top, right, bottom)
-            print(display_str)
-            # fill array with data
-            object = Object()
-            object.class_name = class_name
-            object.certainty = int(100*scores[i])
-            object.p1.x = left
-            object.p1.y = top
-            object.p2.x = right
-            object.p2.y = bottom
-            msg.objects.append(object)
-            #print('OBJECT', object)
-
-        # publish msg
-        #for i in range(len(msg.objects)):
-        #    print('MSG ',i, msg.objects[i])
-        self.objDetPub.publish(msg)
