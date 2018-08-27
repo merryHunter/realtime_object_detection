@@ -348,8 +348,9 @@ class Visualizer(object):
                 use_normalized_coordinates=True)
                 if self.config.VIS_FPS:
                     self._draw_text_on_image("fps: {}".format(fps), (5,20))
-                self.show_image()
-                self._exit_visualization()
+                # self.show_image()
+                # self._exit_visualization()
+                return self.image
             else:
                 self._print_detection(boxes,scores,classes,category_index)
                 self._exit_print()

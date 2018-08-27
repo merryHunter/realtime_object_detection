@@ -22,6 +22,8 @@ from rod.tf_utils import reframe_box_masks_to_image_masks
 from rod.config import Config
 from rod.visualizer import Visualizer
 import tf_utils
+import Image
+import StringIO
 
 ##################################
 ########## Model Class ###########
@@ -223,12 +225,17 @@ class Model(object):
         """
         self.detection = None
 
-    def run(self):
+    def run(self, handler):
         """
         runs detection loop on video or image
         listens on isActive()
         """
         print("> starting detection")
+        self._handler = handler
+        if self._handler.path.endswith('.mjpg'):
+            self._handler.send_response(200)
+            self._handler.send_header('Content-type', 'multipart/x-mixed-replace; boundary=--jpgboundary')
+            self._handler.end_headers()
         self.start()
         while self.isActive():
             # detection
@@ -247,10 +254,21 @@ class Model(object):
         self._visualizer = Visualizer(self.config).start()
 
     def visualize_detection(self):
+
         self.detection = self._visualizer.visualize_detection(self.frame,self.boxes,
                                                             self.classes,self.scores,
                                                             self.masks,self.fps.fps_local(),
                                                             self.category_index,self._is_imageD)
+        jpg = Image.fromarray(self.detection)
+        tmpFile = StringIO.StringIO()
+        jpg.save(tmpFile, 'JPEG')
+        self._handler.wfile.write("--jpgboundary")
+        self._handler.send_header('Content-type', 'image/jpeg')
+        self._handler.send_header('Content-length', str(tmpFile.len))
+        self._handler.end_headers()
+        jpg.save(self._handler.wfile, 'JPEG')
+        # time.sleep(0.001)
+        # end output
 
     def prepare_ros(self,node):
         """
